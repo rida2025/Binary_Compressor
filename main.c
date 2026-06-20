@@ -113,6 +113,39 @@ int compressBinary(Compressor *data){
                     memcpy(buffer+Sections.text_sh_offset, tmp, Sections.text_sh_new_size);
                     free(tmp);
                     printf("we could safe: %lu\n", Sections.text_sh_size-Sections.text_sh_new_size);
+
+                    // must be a multiple of 4096
+                    uint64_t saved_size = Sections.text_sh_size - Sections.text_sh_new_size;
+                    uint64_t bytes_to_remove = (saved_size / 4096) * 4096; 
+
+                    if (bytes_to_remove > 0) {
+                        printf("Successfully reclaiming %lu bytes of file size! (: happy compressing\n", bytes_to_remove);
+
+                        uint64_t original_text_end = Sections.text_sh_offset + Sections.text_sh_size;
+
+                        memmove(buffer + original_text_end - bytes_to_remove, 
+                                buffer + original_text_end, 
+                                fileSize - original_text_end);
+
+                        fileSize -= bytes_to_remove;
+
+                        for (int i = 0; i < ehdr->e_phnum; i++) {
+                            Elf64_Phdr *ph = (Elf64_Phdr *)(buffer + ehdr->e_phoff + (i * ehdr->e_phentsize));
+                            
+                            if (ph->p_offset >= original_text_end) {
+                                ph->p_offset -= bytes_to_remove;
+                            }
+                            
+                            // If the segment actually contain the .text section we must reduce its physical file size (p_filesz)
+                            if (ph->p_offset <= Sections.text_sh_offset && 
+                            (ph->p_offset + ph->p_filesz) >= original_text_end) {
+                                ph->p_filesz -= bytes_to_remove;
+                            }
+                        }
+                    } else {
+                        printf("compression saved %lu bytes, but we need at least 4096 to shrink the file safely.\n", saved_size);
+                    }
+
                 }
             }
 
@@ -170,6 +203,7 @@ int compressBinary(Compressor *data){
                 free(buffer);
                 exit(2);
             }
+            // they still exist only in the file
             ehdr->e_shoff = 0;
             ehdr->e_shentsize = 0;
             ehdr->e_shnum = 0;
